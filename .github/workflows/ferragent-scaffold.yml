@@ -1,0 +1,76 @@
+# Copy this file into Infra-Map's .github/workflows/ - it is NOT run from
+# this repo (Ferragent-AI). See worker/README.md for the full setup.
+#
+# How the "project name -> secrets" mapping works:
+# GitHub Environments give you this natively - create one Environment per
+# project (Settings -> Environments -> New environment, e.g. "acme-prod"),
+# and add that project's AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (or
+# AZURE_*/GCP_* equivalents) as secrets scoped to that Environment. The job
+# below sets `environment: ${{ inputs.project_name }}` so `secrets.*` always
+# resolves to the right project's values, under the same secret names, with
+# zero per-project workflow edits. This also gets you GitHub's own approval
+# gate for free: add required reviewers to an Environment and any run
+# against it pauses for a human "Approve" click before secrets are ever
+# injected - exactly the manual approval step described for real deploys.
+name: Ferragent Scaffold Controller
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: "Project name - must match an Environment name in this repo's settings"
+        required: true
+      cloud_provider:
+        description: "aws | azure | gcp"
+        required: true
+        default: aws
+      working_directory:
+        description: "Path (relative to repo root) containing the scaffolded Terraform"
+        required: true
+      action:
+        description: "plan (read-only, safe) or apply (writes real infrastructure - only if the Environment approves it)"
+        required: true
+        default: plan
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.project_name }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Terraform plan
+        env:
+          AWS_ACCESS_KEY_ID: ${{ inputs.cloud_provider == 'aws' && secrets.AWS_ACCESS_KEY_ID || '' }}
+          AWS_SECRET_ACCESS_KEY: ${{ inputs.cloud_provider == 'aws' && secrets.AWS_SECRET_ACCESS_KEY || '' }}
+          ARM_CLIENT_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_CLIENT_ID || '' }}
+          ARM_CLIENT_SECRET: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_CLIENT_SECRET || '' }}
+          ARM_SUBSCRIPTION_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_SUBSCRIPTION_ID || '' }}
+          ARM_TENANT_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_TENANT_ID || '' }}
+          GOOGLE_CREDENTIALS: ${{ inputs.cloud_provider == 'gcp' && secrets.GOOGLE_CREDENTIALS || '' }}
+        run: terraform plan -out=tfplan -no-color
+
+      # Real writes only run for action=apply, and only after this job's
+      # Environment approval gate (if the Environment has required
+      # reviewers configured) has already let the job start.
+      - name: Terraform apply
+        if: ${{ inputs.action == 'apply' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ inputs.cloud_provider == 'aws' && secrets.AWS_ACCESS_KEY_ID || '' }}
+          AWS_SECRET_ACCESS_KEY: ${{ inputs.cloud_provider == 'aws' && secrets.AWS_SECRET_ACCESS_KEY || '' }}
+          ARM_CLIENT_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_CLIENT_ID || '' }}
+          ARM_CLIENT_SECRET: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_CLIENT_SECRET || '' }}
+          ARM_SUBSCRIPTION_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_SUBSCRIPTION_ID || '' }}
+          ARM_TENANT_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_TENANT_ID || '' }}
+          GOOGLE_CREDENTIALS: ${{ inputs.cloud_provider == 'gcp' && secrets.GOOGLE_CREDENTIALS || '' }}
+        run: terraform apply -auto-approve tfplan
