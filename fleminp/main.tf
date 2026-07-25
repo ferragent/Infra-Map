@@ -1,7 +1,7 @@
 provider "aws" {
-  region = var.aws_region
+  region = "ca-central-1"
 }
 
-resource "aws_iam_user" "ferragent_test_user_2" {
-  name = "ferragent-test-user-2"
+resource "aws_iam_user" "ferragent_test_user_4" {
+  name = "ferragent-test-user-4"
 }
