@@ -41,6 +41,21 @@ jobs:
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
+    # Job-level env so every step (including init, which also needs
+    # credentials to reach an S3/azurerm/GCS backend) sees them - a
+    # per-step env here was a bug, init was silently running with no
+    # credentials at all. AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY is the
+    # standard name every new project's Environment should use (see the
+    # header comment); the fleminp_* fallback exists only because that's
+    # what's currently set for the fleminp project specifically.
+    env:
+      AWS_ACCESS_KEY_ID: ${{ inputs.cloud_provider == 'aws' && (secrets.AWS_ACCESS_KEY_ID || secrets.fleminp_key) || '' }}
+      AWS_SECRET_ACCESS_KEY: ${{ inputs.cloud_provider == 'aws' && (secrets.AWS_SECRET_ACCESS_KEY || secrets.fleminp_secret) || '' }}
+      ARM_CLIENT_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_CLIENT_ID || '' }}
+      ARM_CLIENT_SECRET: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_CLIENT_SECRET || '' }}
+      ARM_SUBSCRIPTION_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_SUBSCRIPTION_ID || '' }}
+      ARM_TENANT_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_TENANT_ID || '' }}
+      GOOGLE_CREDENTIALS: ${{ inputs.cloud_provider == 'gcp' && secrets.GOOGLE_CREDENTIALS || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -50,14 +65,6 @@ jobs:
         run: terraform init
 
       - name: Terraform plan
-        env:
-          AWS_ACCESS_KEY_ID: ${{ inputs.cloud_provider == 'aws' && secrets.AWS_ACCESS_KEY_ID || '' }}
-          AWS_SECRET_ACCESS_KEY: ${{ inputs.cloud_provider == 'aws' && secrets.AWS_SECRET_ACCESS_KEY || '' }}
-          ARM_CLIENT_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_CLIENT_ID || '' }}
-          ARM_CLIENT_SECRET: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_CLIENT_SECRET || '' }}
-          ARM_SUBSCRIPTION_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_SUBSCRIPTION_ID || '' }}
-          ARM_TENANT_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_TENANT_ID || '' }}
-          GOOGLE_CREDENTIALS: ${{ inputs.cloud_provider == 'gcp' && secrets.GOOGLE_CREDENTIALS || '' }}
         run: terraform plan -out=tfplan -no-color
 
       # Real writes only run for action=apply, and only after this job's
@@ -65,12 +72,4 @@ jobs:
       # reviewers configured) has already let the job start.
       - name: Terraform apply
         if: ${{ inputs.action == 'apply' }}
-        env:
-          AWS_ACCESS_KEY_ID: ${{ inputs.cloud_provider == 'aws' && secrets.AWS_ACCESS_KEY_ID || '' }}
-          AWS_SECRET_ACCESS_KEY: ${{ inputs.cloud_provider == 'aws' && secrets.AWS_SECRET_ACCESS_KEY || '' }}
-          ARM_CLIENT_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_CLIENT_ID || '' }}
-          ARM_CLIENT_SECRET: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_CLIENT_SECRET || '' }}
-          ARM_SUBSCRIPTION_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_SUBSCRIPTION_ID || '' }}
-          ARM_TENANT_ID: ${{ inputs.cloud_provider == 'azure' && secrets.ARM_TENANT_ID || '' }}
-          GOOGLE_CREDENTIALS: ${{ inputs.cloud_provider == 'gcp' && secrets.GOOGLE_CREDENTIALS || '' }}
         run: terraform apply -auto-approve tfplan
