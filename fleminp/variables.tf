@@ -1,1 +1,0 @@
-# No variables needed for this import scaffold; provider region is hard‑coded.
