@@ -61,6 +61,30 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
 
+      # Ferragent AI's chat has no AWS credentials and can only guess a
+      # region (or ask). This runner actually holds them, so it can just
+      # look up the real region of the state bucket named in backend.tf and
+      # correct both backend.tf and main.tf's provider block to match,
+      # before init ever runs - removing an entire class of "wrong region"
+      # failures regardless of what the chat assumed.
+      - name: Auto-correct region from the real S3 backend bucket
+        if: inputs.cloud_provider == 'aws'
+        run: |
+          BUCKET=$(grep -oP '(?<=bucket\s=\s")[^"]+' backend.tf | head -1)
+          if [ -z "$BUCKET" ]; then
+            echo "No S3 bucket found in backend.tf - skipping region auto-detection."
+          else
+            REAL_REGION=$(aws s3api get-bucket-location --bucket "$BUCKET" --query 'LocationConstraint' --output text 2>/dev/null || echo "")
+            if [ "$REAL_REGION" = "None" ]; then REAL_REGION="us-east-1"; fi
+            if [ -n "$REAL_REGION" ] && [ "$REAL_REGION" != "none" ]; then
+              echo "Bucket '$BUCKET' actually lives in '$REAL_REGION' - syncing backend.tf/main.tf to match."
+              sed -i "s/region *= *\"[a-zA-Z0-9-]*\"/region = \"$REAL_REGION\"/" backend.tf
+              [ -f main.tf ] && sed -i "0,/region *= *\"[a-zA-Z0-9-]*\"/s//region = \"$REAL_REGION\"/" main.tf
+            else
+              echo "Could not determine the bucket's real region (it may not exist yet) - leaving backend.tf as generated."
+            fi
+          fi
+
       - name: Terraform init
         run: terraform init
 
