@@ -64,8 +64,33 @@ jobs:
       - name: Terraform init
         run: terraform init
 
-      - name: Terraform plan
-        run: terraform plan -out=tfplan -no-color
+      # Ferragent AI's import scaffolds put native `import {}` blocks in a
+      # dedicated import.tf (see IMPORT_SYSTEM_PROMPT in app/src/lib/groq.ts).
+      # A plan/apply with those blocks present actually performs the import
+      # against the real account - this is not a preview. If the resource
+      # named in an import block doesn't actually exist yet, Terraform fails
+      # the plan with "Cannot import non-existent remote object"; when that
+      # specific failure happens, import.tf is removed and the plan is
+      # retried as a plain create from the same resource block - so "import
+      # if it exists, create if it doesn't" happens automatically, without
+      # knowing in advance which case applies.
+      - name: Terraform plan (attempts any import.tf automatically)
+        id: plan_attempt
+        continue-on-error: true
+        run: terraform plan -out=tfplan -no-color 2>&1 | tee plan_output.log
+
+      - name: Fall back to create if the import target doesn't exist
+        if: steps.plan_attempt.outcome == 'failure'
+        run: |
+          if [ -f import.tf ] && grep -qi "cannot import non-existent remote object" plan_output.log; then
+            echo "Import target not found in the account - removing import.tf and creating it fresh instead."
+            rm -f import.tf
+            terraform plan -out=tfplan -no-color
+          else
+            echo "Plan failed for a reason other than a missing import target:"
+            cat plan_output.log
+            exit 1
+          fi
 
       # Real writes only run for action=apply, and only after this job's
       # Environment approval gate (if the Environment has required
