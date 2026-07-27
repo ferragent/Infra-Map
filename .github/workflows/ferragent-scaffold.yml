@@ -85,6 +85,13 @@ jobs:
             fi
           fi
 
+      # The generating model occasionally misspells this exact Terraform
+      # argument as "use_lock_file" (extra underscore) instead of
+      # "use_lockfile" - cheap to just fix in place rather than trust every
+      # generation to get a one-word spelling right.
+      - name: Fix common backend.tf typo (use_lock_file -> use_lockfile)
+        run: sed -i 's/use_lock_file/use_lockfile/' backend.tf
+
       - name: Terraform init
         run: terraform init
 
