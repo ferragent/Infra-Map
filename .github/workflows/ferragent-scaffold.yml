@@ -28,9 +28,15 @@ on:
         description: "Path (relative to repo root) containing the scaffolded Terraform"
         required: true
       action:
-        description: "plan (read-only, safe) or apply (writes real infrastructure - only if the Environment approves it)"
+        description: "plan | apply (writes real infrastructure, only if the Environment approves it) | describe (read-only AWS CLI lookup, no Terraform involved)"
         required: true
         default: plan
+      resource_type:
+        description: "describe only: a Terraform resource type, e.g. aws_iam_user, aws_iam_role, aws_s3_bucket"
+        required: false
+      resource_id:
+        description: "describe only: the real-world identifier (name/ARN) to look up"
+        required: false
 
 jobs:
   terraform:
@@ -59,7 +65,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Read-only, on-demand lookup of a real resource's current state via
+      # AWS CLI - completely separate from the Terraform plan/apply flow, so
+      # the chat can answer "what does X look like right now" without
+      # needing a scaffold, a backend, or any Terraform files at all. Add a
+      # case here for each new resource type as it comes up.
+      - name: Describe existing resource (read-only, AWS only)
+        if: inputs.action == 'describe' && inputs.cloud_provider == 'aws'
+        working-directory: . # no Terraform files needed - don't require working_directory to exist
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID || secrets.fleminp_key }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY || secrets.fleminp_secret }}
+        run: |
+          case "${{ inputs.resource_type }}" in
+            aws_iam_user) aws iam get-user --user-name "${{ inputs.resource_id }}" ;;
+            aws_iam_role) aws iam get-role --role-name "${{ inputs.resource_id }}" ;;
+            aws_iam_group) aws iam get-group --group-name "${{ inputs.resource_id }}" ;;
+            aws_iam_policy) aws iam get-policy --policy-arn "${{ inputs.resource_id }}" ;;
+            aws_s3_bucket)
+              aws s3api get-bucket-location --bucket "${{ inputs.resource_id }}"
+              aws s3api get-bucket-tagging --bucket "${{ inputs.resource_id }}" 2>/dev/null || echo "(no tags)"
+              ;;
+            *)
+              echo "No describe case wired up yet for resource_type '${{ inputs.resource_type }}'."
+              exit 1
+              ;;
+          esac
+
       - uses: hashicorp/setup-terraform@v3
+        if: inputs.action != 'describe'
 
       # Ferragent AI's chat has no AWS credentials and can only guess a
       # region (or ask). This runner actually holds them, so it can just
@@ -68,7 +102,7 @@ jobs:
       # before init ever runs - removing an entire class of "wrong region"
       # failures regardless of what the chat assumed.
       - name: Auto-correct region from the real S3 backend bucket
-        if: inputs.cloud_provider == 'aws'
+        if: inputs.action != 'describe' && inputs.cloud_provider == 'aws'
         run: |
           BUCKET=$(grep -oP '(?<=bucket\s=\s")[^"]+' backend.tf | head -1)
           if [ -z "$BUCKET" ]; then
@@ -90,9 +124,24 @@ jobs:
       # "use_lockfile" - cheap to just fix in place rather than trust every
       # generation to get a one-word spelling right.
       - name: Fix common backend.tf typo (use_lock_file -> use_lockfile)
+        if: inputs.action != 'describe'
         run: sed -i 's/use_lock_file/use_lockfile/' backend.tf
 
+      # The generating model is meant to write exactly one `provider` block
+      # (in backend.tf), but occasionally duplicates it into main.tf too,
+      # which Terraform rejects ("Duplicate provider configuration"). If
+      # both files define one, strip the (simple, non-nested-brace) block
+      # from main.tf and keep backend.tf's as the single source of truth.
+      - name: Remove a duplicate provider block from main.tf if present
+        if: inputs.action != 'describe'
+        run: |
+          if [ -f main.tf ] && grep -q '^provider "' backend.tf 2>/dev/null && grep -q '^provider "' main.tf 2>/dev/null; then
+            echo "main.tf duplicates backend.tf's provider block - removing the one in main.tf."
+            python3 -c "import re; c=open('main.tf').read(); c=re.sub(r'provider\s+\"[^\"]+\"\s*\{[^{}]*\}\n*', '', c); open('main.tf','w').write(c)"
+          fi
+
       - name: Terraform init
+        if: inputs.action != 'describe'
         run: terraform init
 
       # Ferragent AI's import scaffolds put native `import {}` blocks in a
@@ -107,11 +156,12 @@ jobs:
       # knowing in advance which case applies.
       - name: Terraform plan (attempts any import.tf automatically)
         id: plan_attempt
+        if: inputs.action != 'describe'
         continue-on-error: true
         run: terraform plan -out=tfplan -no-color 2>&1 | tee plan_output.log
 
       - name: Fall back to create if the import target doesn't exist
-        if: steps.plan_attempt.outcome == 'failure'
+        if: inputs.action != 'describe' && steps.plan_attempt.outcome == 'failure'
         run: |
           if [ -f import.tf ] && grep -qi "cannot import non-existent remote object" plan_output.log; then
             echo "Import target not found in the account - removing import.tf and creating it fresh instead."
