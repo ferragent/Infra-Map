@@ -4,6 +4,6 @@ import {
 }
 
 import {
-  to = aws_s3_bucket.tf-state-fleminp
-  id = "tf-state-fleminp"
+  to = aws_iam_user.new_user
+  id = "new-user"
 }

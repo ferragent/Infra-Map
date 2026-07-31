@@ -1,7 +1,8 @@
-resource "aws_iam_user" "ferragent-user" {
-  name = "ferragent-user"
+resource "aws_iam_user" "new_user" {
+  # Define the new IAM user here
 }
 
-resource "aws_s3_bucket" "tf-state-fleminp" {
-  bucket = "tf-state-fleminp"
+resource "aws_iam_user" "ferragent-user" {
+  provider = aws
+  # Define the existing IAM user "ferragent-user" here
 }

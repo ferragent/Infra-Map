@@ -3,7 +3,7 @@ terraform {
     bucket         = "tf-state-fleminp"
     key            = "fleminp/terraform.tfstate"
     region         = "ca-central-1"
-    use_lockfile   = true
+    use_lock_file = true
   }
 }
 
