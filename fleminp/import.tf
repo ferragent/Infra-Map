@@ -1,6 +1,4 @@
 import {
-  to = aws_iam_user.example
-  id = "example-user-name"
+  to = aws_iam_user.ferragent-user
+  id = "ferragent-user"
 }
-
-# Add more import blocks as needed
