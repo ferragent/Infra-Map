@@ -1,3 +1,3 @@
-resource "aws_iam_user" "ferragent-user" {
-  name = "ferragent-user"
+resource "aws_iam_user" "demo-user" {
+  name = "demo-user"
 }
